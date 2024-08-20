@@ -54,7 +54,7 @@
 ---
 ---   Quickfix entry from |Quickfix|.... `[Q` `[q` `]q` `]Q` .... |MiniBracketed.quickfix()|
 ---
----   Tree-sitter node and parents.... `[T` `[t` `]t` `]T` .... |MiniBracketed.treesitter()|
+---   Tabpage......................... `[T` `[t` `]t` `]T` .... |MiniBracketed.tabpage()|
 ---
 ---   Undo states from specially
 ---   tracked linear history.......... `[U` `[u` `]u` `]U` .... |MiniBracketed.undo()|
@@ -218,7 +218,7 @@ MiniBracketed.config = {
   location   = { suffix = 'l', options = {} },
   oldfile    = { suffix = 'o', options = {} },
   quickfix   = { suffix = 'q', options = {} },
-  treesitter = { suffix = 't', options = {} },
+  tabpage    = { suffix = 't', options = {} },
   undo       = { suffix = 'u', options = {} },
   window     = { suffix = 'w', options = {} },
   yank       = { suffix = 'y', options = {} },
@@ -804,122 +804,47 @@ MiniBracketed.quickfix = function(direction, opts)
   H.qf_loc_implementation('quickfix', direction, opts)
 end
 
---- Tree-sitter node
+--- Tabpage
 ---
---- Go to end/start of current tree-sitter node and its parents (except root).
+--- Go to next/previous tabpage. Order by their number (see |tabpagenr()|).
 ---
---- Notes:
---- - Requires |get_node_at_pos()| from |lua-treesitter| (present in Neovim=0.8)
----   or |vim.treesitter.get_node()| (present in Neovim>=0.9) along with loaded
----   tree-sitter parser in current buffer.
---- - Directions "first" and "last" work differently from most other targets
----   for performance reasons. They are essentially "backward" and "forward"
----   with very big `n_times` option.
---- - For similar reasons, `wrap` is not supported.
----
---- Direction "forward" moves cursor forward to node's end, "backward" - backward
---- to node's start.
+--- Direction "forward" increases number, "backward" - decreases.
 ---
 ---@param direction __bracketed_direction
----@param opts table|nil Options. A table with fields:
----   - <n_times> `(number)` - Number of times to advance. Default: |v:count1|.
----   __bracketed_add_to_jumplist
-MiniBracketed.treesitter = function(direction, opts)
-  if H.get_treesitter_node == nil then
-    H.error(
-      '`treesitter()` target requires either `vim.treesitter.get_node()` or `vim.treesitter.get_node_at_pos()`.'
-        .. ' Use newer Neovim version.'
-    )
-  end
+---@param opts __bracketed_opts
+MiniBracketed.tabpage = function(direction, opts)
   if H.is_disabled() then return end
 
-  H.validate_direction(direction, { 'first', 'backward', 'forward', 'last' }, 'treesitter')
-  opts = vim.tbl_deep_extend(
-    'force',
-    { add_to_jumplist = false, n_times = vim.v.count1 },
-    H.get_config().treesitter.options,
-    opts or {}
-  )
+  H.validate_direction(direction, { 'first', 'backward', 'forward', 'last' }, 'tabpage')
+  opts =
+    vim.tbl_deep_extend('force', { n_times = vim.v.count1, wrap = true }, H.get_config().tabpage.options, opts or {})
 
-  opts.wrap = false
-
-  if direction == 'first' then
-    direction, opts.n_times = 'backward', math.huge
-  end
-  if direction == 'last' then
-    direction, opts.n_times = 'forward', math.huge
-  end
-
-  -- Define iterator that traverses current node and its parents (except root)
-  local is_bad_node = function(node) return node == nil or node:parent() == nil end
-  local is_after = function(row_new, col_new, row_ref, col_ref)
-    return row_ref < row_new or (row_ref == row_new and col_ref < col_new)
-  end
-  local is_before = function(row_new, col_new, row_ref, col_ref) return is_after(row_ref, col_ref, row_new, col_new) end
+  local tab_list = vim.api.nvim_list_tabpages()
 
   local iterator = {}
 
-  -- Traverse node and parents until node's end is after current position
-  iterator.next = function(node_pos)
-    local node = node_pos.node
-    if is_bad_node(node) then return nil end
-
-    local init_row, init_col = node_pos.pos[1], node_pos.pos[2]
-    local cur_row, cur_col, cur_node = init_row, init_col, node
-
-    repeat
-      if is_bad_node(cur_node) then break end
-
-      cur_row, cur_col = cur_node:end_()
-      -- Correct for end-exclusiveness
-      cur_col = cur_col - 1
-      cur_node = cur_node:parent()
-    until is_after(cur_row, cur_col, init_row, init_col)
-
-    if not is_after(cur_row, cur_col, init_row, init_col) then return end
-
-    return { node = cur_node, pos = { cur_row, cur_col } }
+  iterator.next = function(tab_id)
+    for id = tab_id + 1, tab_list[#tab_list] do
+      if vim.api.nvim_tabpage_is_valid(id) then return id end
+    end
   end
 
-  -- Traverse node and parents until node's start is before current position
-  iterator.prev = function(node_pos)
-    local node = node_pos.node
-    if is_bad_node(node) then return nil end
-
-    local init_row, init_col = node_pos.pos[1], node_pos.pos[2]
-    local cur_row, cur_col, cur_node = init_row, init_col, node
-
-    repeat
-      if is_bad_node(cur_node) then break end
-
-      cur_row, cur_col = cur_node:start()
-      cur_node = cur_node:parent()
-    until is_before(cur_row, cur_col, init_row, init_col)
-
-    if not is_before(cur_row, cur_col, init_row, init_col) then return end
-
-    return { node = cur_node, pos = { cur_row, cur_col } }
+  iterator.prev = function(tab_id)
+    for id = tab_id - 1, tab_list[1], -1 do
+      if vim.api.nvim_tabpage_is_valid(id) then return id end
+    end
   end
 
-  local cur_pos = vim.api.nvim_win_get_cursor(0)
-  local ok, node = pcall(H.get_treesitter_node, cur_pos[1] - 1, cur_pos[2])
-  if not ok then
-    H.error(
-      'In `treesitter()` target can not find tree-sitter node under cursor.'
-        .. ' Do you have tree-sitter enabled in current buffer?'
-    )
-  end
-  iterator.state = { pos = { cur_pos[1] - 1, cur_pos[2] }, node = node }
+  iterator.state = vim.api.nvim_get_current_tabpage()
+  iterator.start_edge = tab_list[1] - 1
+  iterator.end_edge = tab_list[#tab_list] + 1
 
   -- Iterate
-  local res_node_pos = MiniBracketed.advance(iterator, direction, opts)
-  if res_node_pos == nil then return end
-
-  -- Possibly add current position to jumplist
-  if opts.add_to_jumplist then H.add_to_jumplist() end
+  local res_tab_id = MiniBracketed.advance(iterator, direction, opts)
+  if res_tab_id == iterator.state then return end
 
   -- Apply
-  H.set_cursor(res_node_pos.pos[1] + 1, res_node_pos.pos[2])
+  vim.api.nvim_set_current_tabpage(res_tab_id)
 end
 
 --- Undo along a tracked linear history
@@ -1357,7 +1282,7 @@ H.setup_config = function(config)
     ['location']   = { config.location,   'table' },
     ['oldfile']    = { config.oldfile,    'table' },
     ['quickfix']   = { config.quickfix,   'table' },
-    ['treesitter'] = { config.treesitter, 'table' },
+    ['tabpage']    = { config.tabpage,    'table' },
     ['undo']       = { config.undo,       'table' },
     ['window']     = { config.window,     'table' },
     ['yank']       = { config.yank,       'table' },
@@ -1395,8 +1320,8 @@ H.setup_config = function(config)
     ['quickfix.suffix']  = { config.quickfix.suffix, 'string' },
     ['quickfix.options'] = { config.quickfix.options, 'table' },
 
-    ['treesitter.suffix']  = { config.treesitter.suffix, 'string' },
-    ['treesitter.options'] = { config.treesitter.options, 'table' },
+    ['tabpage.suffix']  = { config.tabpage.suffix, 'string' },
+    ['tabpage.options'] = { config.tabpage.options, 'table' },
 
     ['undo.suffix']  = { config.undo.suffix, 'string' },
     ['undo.options'] = { config.undo.options, 'table' },
@@ -1549,23 +1474,23 @@ H.apply_config = function(config)
     H.map('n', ']' .. low, "<Cmd>lua MiniBracketed.quickfix('forward')<CR>",  { desc = 'Quickfix forward' })
   end
 
-  if config.treesitter.suffix ~= '' then
-    local low, up = H.get_suffix_variants(config.treesitter.suffix)
-    H.map('n', '[' .. up, "<Cmd>lua MiniBracketed.treesitter('first')<CR>",  { desc = 'Treesitter first' })
-    H.map('x', '[' .. up, "<Cmd>lua MiniBracketed.treesitter('first')<CR>",  { desc = 'Treesitter first' })
-    H.map('o', '[' .. up, "v<Cmd>lua MiniBracketed.treesitter('first')<CR>", { desc = 'Treesitter first' })
+  if config.tabpage.suffix ~= '' then
+    local low, up = H.get_suffix_variants(config.tabpage.suffix)
+    H.map('n', '[' .. up, "<Cmd>lua MiniBracketed.tabpage('first')<CR>",  { desc = 'Tabpage first' })
+    H.map('x', '[' .. up, "<Cmd>lua MiniBracketed.tabpage('first')<CR>",  { desc = 'Tabpage first' })
+    H.map('o', '[' .. up, "v<Cmd>lua MiniBracketed.tabpage('first')<CR>", { desc = 'Tabpage first' })
 
-    H.map('n', ']' .. up, "<Cmd>lua MiniBracketed.treesitter('last')<CR>",  { desc = 'Treesitter last' })
-    H.map('x', ']' .. up, "<Cmd>lua MiniBracketed.treesitter('last')<CR>",  { desc = 'Treesitter last' })
-    H.map('o', ']' .. up, "v<Cmd>lua MiniBracketed.treesitter('last')<CR>", { desc = 'Treesitter last' })
+    H.map('n', ']' .. up, "<Cmd>lua MiniBracketed.tabpage('last')<CR>",  { desc = 'Tabpage last' })
+    H.map('x', ']' .. up, "<Cmd>lua MiniBracketed.tabpage('last')<CR>",  { desc = 'Tabpage last' })
+    H.map('o', ']' .. up, "v<Cmd>lua MiniBracketed.tabpage('last')<CR>", { desc = 'Tabpage last' })
 
-    H.map('n', '[' .. low, "<Cmd>lua MiniBracketed.treesitter('backward')<CR>",  { desc = 'Treesitter backward' })
-    H.map('x', '[' .. low, "<Cmd>lua MiniBracketed.treesitter('backward')<CR>",  { desc = 'Treesitter backward' })
-    H.map('o', '[' .. low, "v<Cmd>lua MiniBracketed.treesitter('backward')<CR>", { desc = 'Treesitter backward' })
+    H.map('n', '[' .. low, "<Cmd>lua MiniBracketed.tabpage('backward')<CR>",  { desc = 'Tabpage backward' })
+    H.map('x', '[' .. low, "<Cmd>lua MiniBracketed.tabpage('backward')<CR>",  { desc = 'Tabpage backward' })
+    H.map('o', '[' .. low, "v<Cmd>lua MiniBracketed.tabpage('backward')<CR>", { desc = 'Tabpage backward' })
 
-    H.map('n', ']' .. low, "<Cmd>lua MiniBracketed.treesitter('forward')<CR>",  { desc = 'Treesitter forward' })
-    H.map('x', ']' .. low, "<Cmd>lua MiniBracketed.treesitter('forward')<CR>",  { desc = 'Treesitter forward' })
-    H.map('o', ']' .. low, "v<Cmd>lua MiniBracketed.treesitter('forward')<CR>", { desc = 'Treesitter forward' })
+    H.map('n', ']' .. low, "<Cmd>lua MiniBracketed.tabpage('forward')<CR>",  { desc = 'Tabpage forward' })
+    H.map('x', ']' .. low, "<Cmd>lua MiniBracketed.tabpage('forward')<CR>",  { desc = 'Tabpage forward' })
+    H.map('o', ']' .. low, "v<Cmd>lua MiniBracketed.tabpage('forward')<CR>", { desc = 'Tabpage forward' })
   end
 
   if config.undo.suffix ~= '' then
@@ -1813,13 +1738,6 @@ H.qf_loc_implementation = function(list_type, direction, opts)
   -- cursor position.
   vim.cmd(goto_command .. ' ' .. res_ind)
   vim.cmd('normal! zvzz')
-end
-
--- Treesitter -----------------------------------------------------------------
-if vim.fn.has('nvim-0.9') == 1 then
-  H.get_treesitter_node = function(row, col) return vim.treesitter.get_node({ pos = { row, col } }) end
-else
-  H.get_treesitter_node = function(row, col) return vim.treesitter.get_node_at_pos(0, row, col, {}) end
 end
 
 -- Undo -----------------------------------------------------------------------

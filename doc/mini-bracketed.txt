@@ -416,31 +416,22 @@ Parameters ~
   - <n_times> `(number)` - Number of times to advance. Default: |v:count1|.
   - <wrap> `(boolean)` - Whether to wrap around edges. Default: `true`.
 
+
 ------------------------------------------------------------------------------
-                                                    *MiniBracketed.treesitter()*
-                `MiniBracketed.treesitter`({direction}, {opts})
-Tree-sitter node
+                                                       *MiniBracketed.tabpage()*
+                  `MiniBracketed.tabpage`({direction}, {opts})
+Tabpage
 
-Go to end/start of current tree-sitter node and its parents (except root).
+Go to next/previous tabpage. Order by their number (see |tabpagenr()|).
 
-Notes:
-- Requires |get_node_at_pos()| from |lua-treesitter| (present in Neovim=0.8)
-  or |vim.treesitter.get_node()| (present in Neovim>=0.9) along with loaded
-  tree-sitter parser in current buffer.
-- Directions "first" and "last" work differently from most other targets
-  for performance reasons. They are essentially "backward" and "forward"
-  with very big `n_times` option.
-- For similar reasons, `wrap` is not supported.
+Direction "forward" increases number, "backward" - decreases.
 
-Direction "forward" moves cursor forward to node's end, "backward" - backward
-to node's start.
 
 Parameters ~
 {direction} `(string)` One of "first", "backward", "forward", "last".
 {opts} `(table|nil)` Options. A table with fields:
   - <n_times> `(number)` - Number of times to advance. Default: |v:count1|.
-  - <add_to_jumplist> (`boolean`) - Whether to add current position to jumplist.
-    Default: `false`.
+  - <wrap> `(boolean)` - Whether to wrap around edges. Default: `true`.
 
 ------------------------------------------------------------------------------
                                                           *MiniBracketed.undo()*
